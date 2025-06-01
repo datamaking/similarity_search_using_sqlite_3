@@ -1,0 +1,273 @@
+{% extends 'base.html' %}
+
+{% block title %}Home - Similarity Search{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0"><i class="fas fa-search me-2"></i>Similarity Search</h4>
+            </div>
+            <div class="card-body">
+                <form id="searchForm">
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label for="sourceType" class="form-label">Source Type</label>
+                            <select class="form-select" id="sourceType" required>
+                                <option value="">Select Source Type</option>
+                                <option value="ADMIN">ADMIN</option>
+                                <option value="IT">IT</option>
+                                <option value="FINANCE">FINANCE</option>
+                                <option value="HR">HR</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="keyword" class="form-label">Search Keyword</label>
+                            <input type="text" class="form-control" id="keyword" placeholder="Enter search keyword" required>
+                        </div>
+                        <div class="col-md-2 mb-3">
+                            <label class="form-label">&nbsp;</label>
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="fas fa-search me-1"></i>Search
+                            </button>
+                        </div>
+                    </div>
+                </form>
+                
+                <!-- Loading indicator -->
+                <div class="loading text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Searching...</p>
+                </div>
+                
+                <!-- Search Results -->
+                <div id="searchResults" class="search-results" style="display: none;">
+                    <h5>Search Results</h5>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Source Text</th>
+                                    <th>Distance</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resultsTableBody">
+                                <!-- Results will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Pagination -->
+                    <nav aria-label="Search results pagination">
+                        <ul class="pagination justify-content-center" id="pagination">
+                            <!-- Pagination will be populated here -->
+                        </ul>
+                    </nav>
+                    
+                    <div class="text-center mt-3">
+                        <small class="text-muted" id="resultsInfo"></small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 1;
+let currentSourceType = '';
+let currentKeyword = '';
+
+document.getElementById('searchForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    currentPage = 1;
+    performSearch();
+});
+
+function performSearch() {
+    currentSourceType = document.getElementById('sourceType').value;
+    currentKeyword = document.getElementById('keyword').value;
+    
+    if (!currentSourceType || !currentKeyword) {
+        alert('Please select source type and enter keyword');
+        return;
+    }
+    
+    // Show loading
+    document.querySelector('.loading').style.display = 'block';
+    document.getElementById('searchResults').style.display = 'none';
+    
+    // Prepare data
+    const data = {
+        source_type: currentSourceType,
+        keyword: currentKeyword,
+        page: currentPage
+    };
+    
+    // Get CSRF token
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 
+                     document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    
+    // Make AJAX request
+    fetch('{% url "similarity_search_app:search_ajax" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken || ''
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Hide loading
+        document.querySelector('.loading').style.display = 'none';
+        
+        if (data.error) {
+            alert('Error: ' + data.error);
+            return;
+        }
+        
+        displayResults(data);
+    })
+    .catch(error => {
+        document.querySelector('.loading').style.display = 'none';
+        console.error('Error:', error);
+        alert('An error occurred while searching');
+    });
+}
+
+function displayResults(data) {
+    const resultsTableBody = document.getElementById('resultsTableBody');
+    const pagination = document.getElementById('pagination');
+    const resultsInfo = document.getElementById('resultsInfo');
+    
+    // Clear previous results
+    resultsTableBody.innerHTML = '';
+    pagination.innerHTML = '';
+    
+    // Populate results
+    data.results.forEach(result => {
+        const row = document.createElement('tr');
+        row.className = 'result-item';
+        row.innerHTML = `
+            <td>
+                <a href="#" onclick="showSourceDetail('${currentSourceType}', ${result.id}); return false;">
+                    ${result.source_text}
+                </a>
+            </td>
+            <td>
+                <span class="badge bg-info distance-badge">${result.distance}</span>
+            </td>
+        `;
+        resultsTableBody.appendChild(row);
+    });
+    
+    // Create pagination
+    createPagination(data);
+    
+    // Update results info
+    resultsInfo.textContent = `Showing page ${data.current_page} of ${data.total_pages} (${data.total_results} total results)`;
+    
+    // Show results
+    document.getElementById('searchResults').style.display = 'block';
+}
+
+function createPagination(data) {
+    const pagination = document.getElementById('pagination');
+    
+    // Previous button
+    if (data.has_previous) {
+        const prevLi = document.createElement('li');
+        prevLi.className = 'page-item';
+        prevLi.innerHTML = `<a class="page-link" href="#" onclick="changePage(${data.current_page - 1}); return false;">Previous</a>`;
+        pagination.appendChild(prevLi);
+    }
+    
+    // Page numbers
+    const startPage = Math.max(1, data.current_page - 2);
+    const endPage = Math.min(data.total_pages, data.current_page + 2);
+    
+    for (let i = startPage; i <= endPage; i++) {
+        const pageLi = document.createElement('li');
+        pageLi.className = `page-item ${i === data.current_page ? 'active' : ''}`;
+        pageLi.innerHTML = `<a class="page-link" href="#" onclick="changePage(${i}); return false;">${i}</a>`;
+        pagination.appendChild(pageLi);
+    }
+    
+    // Next button
+    if (data.has_next) {
+        const nextLi = document.createElement('li');
+        nextLi.className = 'page-item';
+        nextLi.innerHTML = `<a class="page-link" href="#" onclick="changePage(${data.current_page + 1}); return false;">Next</a>`;
+        pagination.appendChild(nextLi);
+    }
+}
+
+function changePage(page) {
+    currentPage = page;
+    performSearch();
+}
+
+function showSourceDetail(sourceType, sourceId) {
+    const data = {
+        source_type: sourceType,
+        source_id: sourceId
+    };
+    
+    // Get CSRF token
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 
+                     document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    
+    fetch('{% url "similarity_search_app:source_detail" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken || ''
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            alert('Error: ' + data.error);
+            return;
+        }
+        
+        displaySourceDetail(data.source_detail);
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred while fetching source details');
+    });
+}
+
+function displaySourceDetail(sourceDetail) {
+    const content = document.getElementById('sourceDetailContent');
+    
+    let html = '<div class="row">';
+    
+    for (const [key, value] of Object.entries(sourceDetail)) {
+        if (key !== 'id') {
+            html += `
+                <div class="col-md-6 mb-3">
+                    <strong>${key.replace('_', ' ').toUpperCase()}:</strong>
+                    <p class="mb-0">${value || 'N/A'}</p>
+                </div>
+            `;
+        }
+    }
+    
+    html += '</div>';
+    content.innerHTML = html;
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('sourceDetailModal'));
+    modal.show();
+}
+</script>
+{% endblock %}
